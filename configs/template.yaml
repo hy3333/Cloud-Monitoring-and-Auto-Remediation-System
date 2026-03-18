@@ -1,0 +1,14 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Cloud infrastructure monitoring and automated remediation system
+
+Resources:
+  DecisionFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: decision-engine-function
+      Runtime: python3.13.12
+      Handler: app.lambda_handler
+      CodeUri: ../lambda/decision/
+      MemorySize: 128
+      Timeout: 10
