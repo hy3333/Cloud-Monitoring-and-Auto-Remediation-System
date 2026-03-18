@@ -7,7 +7,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: decision-engine-function
-      Runtime: python3.13.12
+      Runtime: python3.13
       Handler: app.lambda_handler
       CodeUri: ../lambda/decision/
       MemorySize: 128

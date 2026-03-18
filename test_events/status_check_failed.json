@@ -1,0 +1,16 @@
+{
+  "source": "aws.cloudwatch",
+  "detail-type": "CloudWatch Alarm State Change",
+  "detail": {
+    "alarmName": "status-check-failed-alarm",
+    "state": {
+      "value": "ALARM"
+    },
+    "configuration": {
+      "description": "EC2 status check failed"
+    }
+  },
+  "resources": [
+    "i-1234567890abcdef0"
+  ]
+}
