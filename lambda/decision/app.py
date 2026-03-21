@@ -1,41 +1,65 @@
+import os
+from uuid import uuid4
+from datetime import datetime, timezone
+
+import boto3
+
+
+dynamodb = boto3.resource("dynamodb")
+table = dynamodb.Table(os.environ["LOG_TABLE_NAME"])
+
+sns = boto3.client("sns")
+SNS_TOPIC_ARN = os.environ["SNS_TOPIC_ARN"]
+
+
 def lambda_handler(event, context):
     print("Received event:", event)
 
-    alarm_name = event.get("detail", {}).get("alarmName")
-    instance_id = None
+    detail = event.get("detail", {})
+    alarm_name = detail.get("alarmName", "")
+    state_value = detail.get("state", {}).get("value", "")
     resources = event.get("resources", [])
 
+    instance_id = "UNKNOWN"
     if resources:
         instance_id = resources[0]
 
     incident_type = "UNKNOWN"
     action = "NO_ACTION"
 
-    if alarm_name == "high-cpu-alarm":
-        incident_type = "HIGH_CPU"
-        action = "SCALE_UP"
+    if state_value == "ALARM":
+        if "HighCPU" in alarm_name:
+            incident_type = "HIGH_CPU"
+            action = "SCALE_UP"
+        elif "StatusCheck" in alarm_name:
+            incident_type = "STATUS_CHECK_FAILED"
+            action = "REBOOT_INSTANCE"
+        elif "LowUtilization" in alarm_name:
+            incident_type = "LOW_UTILIZATION"
+            action = "STOP_INSTANCE"
+        elif "Health" in alarm_name or "Scheduled" in alarm_name:
+            incident_type = "SCHEDULED_HEALTH_EVALUATION"
+            action = "CHECK_ALL_INSTANCES"
 
-    elif alarm_name == "status-check-failed-alarm":
-        incident_type = "STATUS_CHECK_FAILED"
-        action = "REBOOT_INSTANCE"
-
-    elif alarm_name == "low-utilization-alarm":
-        incident_type = "LOW_UTILIZATION"
-        action = "STOP_INSTANCE"
-
-    elif event.get("detail-type") == "Scheduled Event":
-        incident_type = "SCHEDULED_HEALTH_EVALUATION"
-        action = "CHECK_ALL_INSTANCES"
-
-    response = {
+    item = {
+        "log_id": str(uuid4()),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "incident_type": incident_type,
         "action": action,
-        "instance_id": instance_id
+        "instance_id": instance_id,
+        "alarm_name": alarm_name,
+        "alarm_state": state_value,
     }
 
-    print("Decision response:", response)
+    table.put_item(Item=item)
+
+    sns.publish(
+        TopicArn=SNS_TOPIC_ARN,
+        Subject="Incident Detected",
+        Message=str(item)
+    )
 
     return {
         "statusCode": 200,
-        "body": str(response)
+        "body": item
     }

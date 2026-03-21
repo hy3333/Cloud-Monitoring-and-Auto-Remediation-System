@@ -1,0 +1,12 @@
+version = 0.1
+
+[default.deploy.parameters]
+stack_name = "cloud-monitoring-stack"
+resolve_s3 = true
+s3_prefix = "cloud-monitoring-stack"
+capabilities = "CAPABILITY_IAM"
+image_repositories = []
+confirm_changeset = true
+
+[default.global.parameters]
+region = "ap-south-2"
