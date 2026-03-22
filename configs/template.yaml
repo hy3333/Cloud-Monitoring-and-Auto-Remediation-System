@@ -16,6 +16,7 @@ Resources:
           LOG_TABLE_NAME: !Ref IncidentLogsTable
           SNS_TOPIC_ARN: !Ref IncidentTopic
           REMEDIATION_FUNCTION_NAME: !Ref RemediationFunction
+          NOTIFICATION_TABLE_NAME: !Ref NotificationCooldownTable
       Policies:
         - Statement:
             - Effect: Allow
@@ -25,7 +26,9 @@ Resources:
                 - dynamodb:UpdateItem
                 - dynamodb:Scan
                 - dynamodb:Query
-              Resource: !GetAtt IncidentLogsTable.Arn
+              Resource:
+                - !GetAtt IncidentLogsTable.Arn
+                - !GetAtt NotificationCooldownTable.Arn
             - Effect: Allow
               Action:
                 - sns:Publish
@@ -89,6 +92,17 @@ Resources:
           AttributeType: S
       KeySchema:
         - AttributeName: cooldown_key
+          KeyType: HASH
+
+  NotificationCooldownTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: notification_key
+          AttributeType: S
+      KeySchema:
+        - AttributeName: notification_key
           KeyType: HASH
 
   IncidentTopic:

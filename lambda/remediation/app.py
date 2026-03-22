@@ -17,6 +17,7 @@ def lambda_handler(event, context):
     instance_id = event.get("instance_id")
     action = event.get("action")
     incident_type = event.get("incident_type", "UNKNOWN")
+    alarm_name = event.get("alarm_name", "UNKNOWN")
 
     if not instance_id or not action:
         return {
@@ -37,7 +38,9 @@ def lambda_handler(event, context):
                 f"Suppressed action {action} for {instance_id}. "
                 f"Cooldown active for {COOLDOWN_MINUTES} minutes."
             )
-            print(result)
+            print(
+                f"{result} | incident_type={incident_type} | alarm_name={alarm_name}"
+            )
 
             return {
                 "statusCode": 200,
@@ -68,11 +71,15 @@ def lambda_handler(event, context):
             "instance_id": instance_id,
             "action": action,
             "incident_type": incident_type,
+            "alarm_name": alarm_name,
             "last_action_time": now.isoformat(),
         }
     )
 
-    print(result)
+    print(
+        f"Remediation executed | result={result} | incident_type={incident_type} | "
+        f"alarm_name={alarm_name}"
+    )
 
     return {
         "statusCode": 200,

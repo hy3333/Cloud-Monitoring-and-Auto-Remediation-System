@@ -1,19 +1,65 @@
 import json
 import os
 from uuid import uuid4
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 import boto3
 
 
 dynamodb = boto3.resource("dynamodb")
-table = dynamodb.Table(os.environ["LOG_TABLE_NAME"])
+incident_table = dynamodb.Table(os.environ["LOG_TABLE_NAME"])
+notification_table = dynamodb.Table(os.environ["NOTIFICATION_TABLE_NAME"])
 
 sns = boto3.client("sns")
 lambda_client = boto3.client("lambda")
 
 SNS_TOPIC_ARN = os.environ["SNS_TOPIC_ARN"]
 REMEDIATION_FUNCTION_NAME = os.environ["REMEDIATION_FUNCTION_NAME"]
+
+NOTIFICATION_COOLDOWN_MINUTES = 10
+
+
+def classify_incident(alarm_name: str, state_value: str) -> tuple[str, str, str]:
+    if state_value != "ALARM":
+        return "UNKNOWN", "NO_ACTION", "Alarm state is not ALARM"
+
+    if "HighCPU" in alarm_name:
+        return "HIGH_CPU", "SCALE_UP", "Alarm name matched HighCPU pattern"
+    if "StatusCheck" in alarm_name:
+        return "STATUS_CHECK_FAILED", "REBOOT_INSTANCE", "Alarm name matched StatusCheck pattern"
+    if "LowUtilization" in alarm_name:
+        return "LOW_UTILIZATION", "STOP_INSTANCE", "Alarm name matched LowUtilization pattern"
+    if "Health" in alarm_name or "Scheduled" in alarm_name:
+        return "SCHEDULED_HEALTH_EVALUATION", "CHECK_ALL_INSTANCES", "Alarm name matched health evaluation pattern"
+
+    return "UNKNOWN", "NO_ACTION", "No known alarm pattern matched"
+
+
+def should_send_notification(instance_id: str, action: str, alarm_name: str) -> tuple[bool, str]:
+    notification_key = f"{instance_id}#{action}#{alarm_name}"
+    existing = notification_table.get_item(Key={"notification_key": notification_key})
+    item = existing.get("Item")
+    now = datetime.now(timezone.utc)
+
+    if item:
+        last_sent_time = datetime.fromisoformat(item["last_sent_time"])
+        if now - last_sent_time < timedelta(minutes=NOTIFICATION_COOLDOWN_MINUTES):
+            return False, (
+                f"Notification suppressed. Same incident notified within "
+                f"{NOTIFICATION_COOLDOWN_MINUTES} minutes."
+            )
+
+    notification_table.put_item(
+        Item={
+            "notification_key": notification_key,
+            "instance_id": instance_id,
+            "action": action,
+            "alarm_name": alarm_name,
+            "last_sent_time": now.isoformat(),
+        }
+    )
+
+    return True, "Notification allowed. No recent duplicate notification found."
 
 
 def lambda_handler(event, context):
@@ -24,28 +70,11 @@ def lambda_handler(event, context):
     state_value = detail.get("state", {}).get("value", "")
     resources = event.get("resources", [])
 
-    instance_id = "UNKNOWN"
-    if resources:
-        instance_id = resources[0]
+    instance_id = resources[0] if resources else "UNKNOWN"
 
-    incident_type = "UNKNOWN"
-    action = "NO_ACTION"
+    incident_type, action, decision_reason = classify_incident(alarm_name, state_value)
 
-    if state_value == "ALARM":
-        if "HighCPU" in alarm_name:
-            incident_type = "HIGH_CPU"
-            action = "SCALE_UP"
-        elif "StatusCheck" in alarm_name:
-            incident_type = "STATUS_CHECK_FAILED"
-            action = "REBOOT_INSTANCE"
-        elif "LowUtilization" in alarm_name:
-            incident_type = "LOW_UTILIZATION"
-            action = "STOP_INSTANCE"
-        elif "Health" in alarm_name or "Scheduled" in alarm_name:
-            incident_type = "SCHEDULED_HEALTH_EVALUATION"
-            action = "CHECK_ALL_INSTANCES"
-
-    item = {
+    log_item = {
         "log_id": str(uuid4()),
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "incident_type": incident_type,
@@ -53,15 +82,22 @@ def lambda_handler(event, context):
         "instance_id": instance_id,
         "alarm_name": alarm_name,
         "alarm_state": state_value,
+        "decision_reason": decision_reason,
     }
 
-    table.put_item(Item=item)
+    incident_table.put_item(Item=log_item)
+
+    print(
+        f"Decision made | incident_type={incident_type} | action={action} | "
+        f"instance_id={instance_id} | reason={decision_reason}"
+    )
 
     if action != "NO_ACTION" and instance_id != "UNKNOWN":
         remediation_payload = {
             "instance_id": instance_id,
             "incident_type": incident_type,
             "action": action,
+            "alarm_name": alarm_name,
         }
 
         lambda_client.invoke(
@@ -70,13 +106,41 @@ def lambda_handler(event, context):
             Payload=json.dumps(remediation_payload),
         )
 
-    sns.publish(
-        TopicArn=SNS_TOPIC_ARN,
-        Subject="Incident Detected",
-        Message=str(item)
+        print(
+            f"Remediation invocation sent | function={REMEDIATION_FUNCTION_NAME} | "
+            f"payload={remediation_payload}"
+        )
+
+    should_notify, notification_reason = should_send_notification(instance_id, action, alarm_name)
+
+    print(
+        f"Notification decision | should_notify={should_notify} | "
+        f"reason={notification_reason}"
     )
+
+    if should_notify:
+        message = {
+            "timestamp": log_item["timestamp"],
+            "incident_type": incident_type,
+            "action": action,
+            "instance_id": instance_id,
+            "alarm_name": alarm_name,
+            "alarm_state": state_value,
+            "decision_reason": decision_reason,
+            "notification_reason": notification_reason,
+        }
+
+        sns.publish(
+            TopicArn=SNS_TOPIC_ARN,
+            Subject=f"Incident Detected: {incident_type}",
+            Message=json.dumps(message, indent=2),
+        )
+
+        print("SNS notification sent")
+    else:
+        print("SNS notification skipped due to cooldown")
 
     return {
         "statusCode": 200,
-        "body": item
+        "body": log_item
     }
