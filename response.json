@@ -1,0 +1,1 @@
+{"statusCode": 200, "body": {"log_id": "35c6073c-f3a5-45d2-b1fc-2706631c9fe2", "timestamp": "2026-03-22T07:52:12.914913+00:00", "incident_type": "STATUS_CHECK_FAILED", "action": "REBOOT_INSTANCE", "instance_id": "i-037133a1849addb1f", "alarm_name": "StatusCheckAlarm-TestInstance", "alarm_state": "ALARM"}}

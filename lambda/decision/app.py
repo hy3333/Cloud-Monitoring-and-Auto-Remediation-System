@@ -1,3 +1,4 @@
+import json
 import os
 from uuid import uuid4
 from datetime import datetime, timezone
@@ -9,7 +10,10 @@ dynamodb = boto3.resource("dynamodb")
 table = dynamodb.Table(os.environ["LOG_TABLE_NAME"])
 
 sns = boto3.client("sns")
+lambda_client = boto3.client("lambda")
+
 SNS_TOPIC_ARN = os.environ["SNS_TOPIC_ARN"]
+REMEDIATION_FUNCTION_NAME = os.environ["REMEDIATION_FUNCTION_NAME"]
 
 
 def lambda_handler(event, context):
@@ -52,6 +56,19 @@ def lambda_handler(event, context):
     }
 
     table.put_item(Item=item)
+
+    if action != "NO_ACTION" and instance_id != "UNKNOWN":
+        remediation_payload = {
+            "instance_id": instance_id,
+            "incident_type": incident_type,
+            "action": action,
+        }
+
+        lambda_client.invoke(
+            FunctionName=REMEDIATION_FUNCTION_NAME,
+            InvocationType="Event",
+            Payload=json.dumps(remediation_payload),
+        )
 
     sns.publish(
         TopicArn=SNS_TOPIC_ARN,
