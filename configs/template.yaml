@@ -15,6 +15,7 @@ Resources:
         Variables:
           LOG_TABLE_NAME: !Ref IncidentLogsTable
           SNS_TOPIC_ARN: !Ref IncidentTopic
+          REMEDIATION_FUNCTION_NAME: !Ref RemediationFunction
       Policies:
         - Statement:
             - Effect: Allow
@@ -29,6 +30,10 @@ Resources:
               Action:
                 - sns:Publish
               Resource: !Ref IncidentTopic
+            - Effect: Allow
+              Action:
+                - lambda:InvokeFunction
+              Resource: !GetAtt RemediationFunction.Arn
       Events:
         ScheduledHealthCheck:
           Type: Schedule
@@ -36,6 +41,24 @@ Resources:
             Schedule: rate(5 minutes)
             Description: Triggers periodic health evaluation
             Enabled: false
+
+  RemediationFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Runtime: python3.13
+      Handler: app.lambda_handler
+      CodeUri: ../lambda/remediation/
+      MemorySize: 128
+      Timeout: 10
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ec2:StopInstances
+                - ec2:RebootInstances
+                - ec2:StartInstances
+                - ec2:DescribeInstances
+              Resource: "*"
 
   IncidentLogsTable:
     Type: AWS::DynamoDB::Table
@@ -50,3 +73,4 @@ Resources:
 
   IncidentTopic:
     Type: AWS::SNS::Topic
+    
