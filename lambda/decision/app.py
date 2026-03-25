@@ -13,6 +13,7 @@ asg_client = boto3.client("autoscaling")
 REMEDIATION_LAMBDA_NAME = os.environ["REMEDIATION_LAMBDA_NAME"]
 LOG_TABLE_NAME = os.environ["LOG_TABLE_NAME"]
 NOTIFICATION_TABLE_NAME = os.environ["NOTIFICATION_TABLE_NAME"]
+AUTO_SCALING_GROUP_NAME = os.environ["AUTO_SCALING_GROUP_NAME"]
 
 incident_table = dynamodb.Table(LOG_TABLE_NAME)
 notification_table = dynamodb.Table(NOTIFICATION_TABLE_NAME)
@@ -27,7 +28,7 @@ def classify_incident(alarm_name: str, state_value: str) -> tuple[str, str, str]
     alarm_name_lower = alarm_name.lower()
 
     if "cpu" in alarm_name_lower:
-        return "HIGH_CPU", "NO_ACTION", "Alarm name matched CPU pattern"
+        return "HIGH_CPU", "SCALE_MANAGED_BY_ASG", "Alarm name matched CPU pattern"
 
     if "status-check" in alarm_name_lower or "statuscheck" in alarm_name_lower:
         return "STATUS_CHECK_FAILED", "REBOOT", "Alarm name matched status check pattern"
@@ -41,16 +42,14 @@ def classify_incident(alarm_name: str, state_value: str) -> tuple[str, str, str]
 def resolve_instance_id(event: dict, incident_type: str) -> tuple[str, str]:
     resources = event.get("resources", [])
 
-    # Try extracting instance directly from event resources first
     for resource in resources:
         if isinstance(resource, str) and ":instance/" in resource:
             return resource.split("/")[-1], "Resolved from EC2 instance ARN in event resources"
 
-    # ASG-aware resolution for status check incidents
     if incident_type == "STATUS_CHECK_FAILED":
         try:
             response = asg_client.describe_auto_scaling_groups(
-                AutoScalingGroupNames=["webapp-asg"]
+                AutoScalingGroupNames=[AUTO_SCALING_GROUP_NAME]
             )
             groups = response.get("AutoScalingGroups", [])
 
@@ -62,23 +61,20 @@ def resolve_instance_id(event: dict, incident_type: str) -> tuple[str, str]:
             if not instances:
                 return "UNKNOWN", "No instances in ASG"
 
-            # Prefer unhealthy instance
             for inst in instances:
                 if inst.get("HealthStatus") == "Unhealthy":
                     return inst["InstanceId"], "Resolved UNHEALTHY instance from ASG"
 
-            # Fallback to active in-service instance
             for inst in instances:
                 if inst.get("LifecycleState") == "InService":
                     return inst["InstanceId"], "Fallback to InService instance (no unhealthy found)"
 
-            # Final fallback
             return instances[0]["InstanceId"], "Fallback to first instance in ASG"
 
         except Exception as e:
             return "UNKNOWN", f"ASG lookup failed: {str(e)}"
 
-    return "UNKNOWN", "Could not resolve instance ID"
+    return "UNKNOWN", "Instance resolution not required for this incident type"
 
 
 def should_send_notification(instance_id: str, action: str, alarm_name: str) -> tuple[bool, str]:
@@ -141,7 +137,8 @@ def lambda_handler(event, context):
 
     remediation_invoked = False
 
-    if action != "NO_ACTION" and instance_id != "UNKNOWN":
+    # Only invoke remediation for real remediation actions
+    if action in ["REBOOT", "STOP"] and instance_id != "UNKNOWN":
         remediation_payload = {
             "instance_id": instance_id,
             "incident_type": incident_type,

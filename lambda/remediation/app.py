@@ -4,7 +4,6 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 import boto3
-from botocore.exceptions import ClientError
 
 
 ec2 = boto3.client("ec2")
@@ -35,7 +34,8 @@ def log_incident(instance_id, alarm_name, alarm_state, incident_type, action, de
             "status": status,
             "result_message": result_message,
             "details": details or {},
-            "timestamp": datetime.now(timezone.utc).isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "source": "remediation-handler"
         }
     )
 
@@ -54,7 +54,7 @@ def lambda_handler(event, context):
     status = "SUCCESS"
 
     try:
-        if not instance_id and action in ["REBOOT", "STOP"]:
+        if action in ["REBOOT", "STOP"] and not instance_id:
             raise ValueError("instance_id is required for REBOOT or STOP action")
 
         if action == "REBOOT":
@@ -64,6 +64,9 @@ def lambda_handler(event, context):
         elif action == "STOP":
             ec2.stop_instances(InstanceIds=[instance_id])
             result_message = f"Stop triggered for instance {instance_id}"
+
+        elif action == "SCALE_MANAGED_BY_ASG":
+            result_message = "High CPU detected. Scaling is expected to be handled by ASG target tracking policy."
 
         else:
             result_message = f"No remediation action taken for incident type {incident_type}"

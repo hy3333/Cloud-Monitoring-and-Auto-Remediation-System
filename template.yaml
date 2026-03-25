@@ -1,0 +1,650 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Full parameterized cloud monitoring and auto-remediation system
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: cloud-monitoring
+    Description: Prefix for resource naming and tagging
+
+  NotificationEmail:
+    Type: String
+    Description: Email for SNS notifications
+
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC ID
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet::Id
+    Description: First public subnet
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet::Id
+    Description: Second public subnet
+
+  KeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: EC2 key pair name
+
+  SSHLocation:
+    Type: String
+    Default: 0.0.0.0/0
+    Description: CIDR for SSH access
+
+  InstanceType:
+    Type: String
+    Default: t3.micro
+    AllowedValues:
+      - t2.micro
+      - t3.micro
+
+  AmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64
+
+  AlbName:
+    Type: String
+    Description: Unique ALB name
+
+  TargetGroupName:
+    Type: String
+    Description: Unique target group name
+
+  AutoScalingGroupName:
+    Type: String
+    Description: Unique ASG name
+
+  LaunchTemplateName:
+    Type: String
+    Description: Unique launch template name
+
+  DashboardName:
+    Type: String
+    Description: Unique CloudWatch dashboard name
+
+  AlertsTopicName:
+    Type: String
+    Description: Unique SNS topic name
+
+  HighCpuAlarmName:
+    Type: String
+    Description: Unique high CPU alarm name
+
+  StatusCheckAlarmName:
+    Type: String
+    Description: Unique status check alarm name
+
+  IncidentLogsTableName:
+    Type: String
+    Description: Unique incident logs table name
+
+  NotificationCooldownTableName:
+    Type: String
+    Description: Unique notification cooldown table name
+
+  CpuThreshold:
+    Type: Number
+    Default: 70
+    Description: CPU threshold for scale monitoring
+
+Globals:
+  Function:
+    Runtime: python3.13
+    Timeout: 30
+    MemorySize: 256
+    Architectures:
+      - x86_64
+
+Resources:
+  #######################################
+  # SNS
+  #######################################
+  AlertsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Ref AlertsTopicName
+
+  AlertsSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref AlertsTopic
+      Protocol: email
+      Endpoint: !Ref NotificationEmail
+
+  #######################################
+  # DynamoDB
+  #######################################
+  IncidentRemediationLogsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Ref IncidentLogsTableName
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: log_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: log_id
+          KeyType: HASH
+
+  NotificationCooldownTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Ref NotificationCooldownTableName
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: notification_key
+          AttributeType: S
+      KeySchema:
+        - AttributeName: notification_key
+          KeyType: HASH
+
+  #######################################
+  # Security Groups
+  #######################################
+  AlbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for ALB
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - Description: Allow HTTP from internet
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - Description: Allow all outbound
+          IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-alb-sg'
+
+  WebEc2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for ASG EC2 instances
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - Description: Allow HTTP from ALB
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref AlbSecurityGroup
+        - Description: Allow SSH from trusted IP
+          IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref SSHLocation
+      SecurityGroupEgress:
+        - Description: Allow all outbound
+          IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-web-ec2-sg'
+
+  #######################################
+  # Lambda Functions
+  #######################################
+  DecisionHandlerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-decision-handler'
+      CodeUri: lambda/decision/
+      Handler: app.lambda_handler
+      Environment:
+        Variables:
+          REMEDIATION_LAMBDA_NAME: !Sub '${ProjectName}-remediation-handler'
+          LOG_TABLE_NAME: !Ref IncidentLogsTableName
+          NOTIFICATION_TABLE_NAME: !Ref NotificationCooldownTableName
+          AUTO_SCALING_GROUP_NAME: !Ref AutoScalingGroupName
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - DynamoDBCrudPolicy:
+            TableName: !Ref IncidentLogsTableName
+        - DynamoDBCrudPolicy:
+            TableName: !Ref NotificationCooldownTableName
+        - Statement:
+            - Sid: InvokeRemediationLambda
+              Effect: Allow
+              Action:
+                - lambda:InvokeFunction
+              Resource: !GetAtt RemediationHandlerFunction.Arn
+            - Sid: ReadAutoScalingGroups
+              Effect: Allow
+              Action:
+                - autoscaling:DescribeAutoScalingGroups
+              Resource: "*"
+
+  RemediationHandlerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-remediation-handler'
+      CodeUri: lambda/remediation/
+      Handler: app.lambda_handler
+      Environment:
+        Variables:
+          LOG_TABLE_NAME: !Ref IncidentLogsTableName
+          SNS_TOPIC_ARN: !Ref AlertsTopic
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - DynamoDBCrudPolicy:
+            TableName: !Ref IncidentLogsTableName
+        - Statement:
+            - Sid: PublishToSNS
+              Effect: Allow
+              Action:
+                - sns:Publish
+              Resource: !Ref AlertsTopic
+            - Sid: EC2RemediationActions
+              Effect: Allow
+              Action:
+                - ec2:RebootInstances
+                - ec2:StopInstances
+                - ec2:DescribeInstances
+              Resource: "*"
+
+  #######################################
+  # EventBridge Rules
+  #######################################
+  StatusCheckAlarmToDecisionRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub '${ProjectName}-status-check-alarm-to-decision'
+      Description: Route status check alarm to decision Lambda
+      EventPattern:
+        source:
+          - aws.cloudwatch
+        detail-type:
+          - CloudWatch Alarm State Change
+        detail:
+          alarmName:
+            - !Ref StatusCheckAlarmName
+          state:
+            value:
+              - ALARM
+      Targets:
+        - Arn: !GetAtt DecisionHandlerFunction.Arn
+          Id: decision-handler-status-target
+
+  HighCpuAlarmToDecisionRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub '${ProjectName}-high-cpu-alarm-to-decision'
+      Description: Route high CPU alarm to decision Lambda
+      EventPattern:
+        source:
+          - aws.cloudwatch
+        detail-type:
+          - CloudWatch Alarm State Change
+        detail:
+          alarmName:
+            - !Ref HighCpuAlarmName
+          state:
+            value:
+              - ALARM
+      Targets:
+        - Arn: !GetAtt DecisionHandlerFunction.Arn
+          Id: decision-handler-highcpu-target
+
+  PermissionForEventBridgeToInvokeDecisionForStatus:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref DecisionHandlerFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt StatusCheckAlarmToDecisionRule.Arn
+
+  PermissionForEventBridgeToInvokeDecisionForHighCpu:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref DecisionHandlerFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt HighCpuAlarmToDecisionRule.Arn
+
+  #######################################
+  # ALB + Target Group + Listener
+  #######################################
+  WebAppTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Ref TargetGroupName
+      VpcId: !Ref VpcId
+      Port: 80
+      Protocol: HTTP
+      TargetType: instance
+      HealthCheckEnabled: true
+      HealthCheckProtocol: HTTP
+      HealthCheckPath: /
+      Matcher:
+        HttpCode: 200
+
+  WebAppALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Ref AlbName
+      Type: application
+      Scheme: internet-facing
+      SecurityGroups:
+        - !Ref AlbSecurityGroup
+      Subnets:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      Tags:
+        - Key: Name
+          Value: !Ref AlbName
+        - Key: Project
+          Value: !Ref ProjectName
+
+  WebAppALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref WebAppALB
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref WebAppTargetGroup
+
+  #######################################
+  # Launch Template
+  #######################################
+  WebAppLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Ref LaunchTemplateName
+      LaunchTemplateData:
+        ImageId: !Ref AmiId
+        InstanceType: !Ref InstanceType
+        KeyName: !Ref KeyPairName
+        SecurityGroupIds:
+          - !Ref WebEc2SecurityGroup
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: Webapp
+              - Key: Project
+                Value: !Ref ProjectName
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            dnf update -y || yum update -y
+            dnf install -y httpd || yum install -y httpd
+            systemctl enable httpd
+            systemctl start httpd
+            echo "<h1>Cloud Monitoring Demo App</h1><p>Instance: $(hostname -f)</p>" > /var/www/html/index.html
+
+  #######################################
+  # Auto Scaling Group
+  #######################################
+  WebAppAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: !Ref AutoScalingGroupName
+      MinSize: '1'
+      MaxSize: '2'
+      DesiredCapacity: '1'
+      VPCZoneIdentifier:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      TargetGroupARNs:
+        - !Ref WebAppTargetGroup
+      HealthCheckType: ELB
+      HealthCheckGracePeriod: 300
+      MetricsCollection:
+        - Granularity: 1Minute
+          Metrics:
+            - GroupDesiredCapacity
+            - GroupInServiceInstances
+            - GroupMinSize
+            - GroupMaxSize
+            - GroupTotalInstances
+            - GroupPendingInstances
+            - GroupStandbyInstances
+            - GroupTerminatingInstances
+      NotificationConfigurations:
+        - TopicARN: !Ref AlertsTopic
+          NotificationTypes:
+            - autoscaling:EC2_INSTANCE_LAUNCH
+            - autoscaling:EC2_INSTANCE_TERMINATE
+            - autoscaling:EC2_INSTANCE_LAUNCH_ERROR
+            - autoscaling:EC2_INSTANCE_TERMINATE_ERROR
+      LaunchTemplate:
+        LaunchTemplateId: !Ref WebAppLaunchTemplate
+        Version: !GetAtt WebAppLaunchTemplate.LatestVersionNumber
+      Tags:
+        - Key: Name
+          Value: Webapp
+          PropagateAtLaunch: true
+        - Key: Project
+          Value: !Ref ProjectName
+          PropagateAtLaunch: true
+
+  #######################################
+  # Scaling Policy
+  #######################################
+  CpuTargetTrackingScalingPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref WebAppAutoScalingGroup
+      PolicyType: TargetTrackingScaling
+      TargetTrackingConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ASGAverageCPUUtilization
+        TargetValue: !Ref CpuThreshold
+
+  #######################################
+  # CloudWatch Alarms
+  #######################################
+  WebAppAsgHighCpuAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Ref HighCpuAlarmName
+      AlarmDescription: High CPU alarm for ASG web tier
+      Namespace: AWS/EC2
+      MetricName: CPUUtilization
+      Statistic: Average
+      Period: 60
+      EvaluationPeriods: 2
+      DatapointsToAlarm: 2
+      Threshold: !Ref CpuThreshold
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      Dimensions:
+        - Name: AutoScalingGroupName
+          Value: !Ref AutoScalingGroupName
+      AlarmActions:
+        - !Ref AlertsTopic
+
+  AsgInstanceStatusCheckFailedAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Ref StatusCheckAlarmName
+      AlarmDescription: Status check failed alarm for ASG instance health
+      Namespace: AWS/EC2
+      MetricName: StatusCheckFailed_Instance
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      Dimensions:
+        - Name: AutoScalingGroupName
+          Value: !Ref AutoScalingGroupName
+
+  #######################################
+  # CloudWatch Dashboard
+  #######################################
+  CloudMonitoringDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Ref DashboardName
+      DashboardBody: !Sub
+        - |
+          {
+            "widgets": [
+              {
+                "type": "metric",
+                "x": 0,
+                "y": 0,
+                "width": 6,
+                "height": 6,
+                "properties": {
+                  "title": "Instance CPU Utilization",
+                  "view": "timeSeries",
+                  "stacked": false,
+                  "metrics": [
+                    [ "AWS/EC2", "CPUUtilization", "AutoScalingGroupName", "${AsgName}" ]
+                  ],
+                  "region": "${AWS::Region}",
+                  "stat": "Average",
+                  "period": 60
+                }
+              },
+              {
+                "type": "metric",
+                "x": 6,
+                "y": 0,
+                "width": 6,
+                "height": 6,
+                "properties": {
+                  "title": "ALB Request Count",
+                  "view": "timeSeries",
+                  "stacked": false,
+                  "metrics": [
+                    [ "AWS/ApplicationELB", "RequestCount", "LoadBalancer", "${AlbFullName}" ]
+                  ],
+                  "region": "${AWS::Region}",
+                  "stat": "Sum",
+                  "period": 60
+                }
+              },
+              {
+                "type": "metric",
+                "x": 12,
+                "y": 0,
+                "width": 6,
+                "height": 6,
+                "properties": {
+                  "title": "Healthy Hosts",
+                  "view": "singleValue",
+                  "metrics": [
+                    [ "AWS/ApplicationELB", "HealthyHostCount", "TargetGroup", "${TgFullName}", "LoadBalancer", "${AlbFullName}" ]
+                  ],
+                  "region": "${AWS::Region}",
+                  "stat": "Average",
+                  "period": 60
+                }
+              },
+              {
+                "type": "metric",
+                "x": 18,
+                "y": 0,
+                "width": 6,
+                "height": 6,
+                "properties": {
+                  "title": "Unhealthy Hosts",
+                  "view": "singleValue",
+                  "metrics": [
+                    [ "AWS/ApplicationELB", "UnHealthyHostCount", "TargetGroup", "${TgFullName}", "LoadBalancer", "${AlbFullName}" ]
+                  ],
+                  "region": "${AWS::Region}",
+                  "stat": "Average",
+                  "period": 60
+                }
+              },
+              {
+                "type": "metric",
+                "x": 0,
+                "y": 6,
+                "width": 12,
+                "height": 6,
+                "properties": {
+                  "title": "ASG Capacity",
+                  "view": "timeSeries",
+                  "stacked": false,
+                  "metrics": [
+                    [ "AWS/AutoScaling", "GroupDesiredCapacity", "AutoScalingGroupName", "${AsgName}" ],
+                    [ ".", "GroupInServiceInstances", ".", "." ]
+                  ],
+                  "region": "${AWS::Region}",
+                  "stat": "Average",
+                  "period": 60
+                }
+              },
+              {
+                "type": "alarm",
+                "x": 12,
+                "y": 6,
+                "width": 12,
+                "height": 3,
+                "properties": {
+                  "title": "Active Alarms",
+                  "alarms": [
+                    "${HighCpuAlarmArn}",
+                    "${StatusCheckAlarmArn}"
+                  ]
+                }
+              },
+              {
+                "type": "metric",
+                "x": 12,
+                "y": 9,
+                "width": 12,
+                "height": 3,
+                "properties": {
+                  "title": "High CPU Alarm Graph",
+                  "view": "timeSeries",
+                  "stacked": false,
+                  "annotations": {
+                    "horizontal": [
+                      {
+                        "label": "CPU Threshold",
+                        "value": ${CpuThresholdValue}
+                      }
+                    ]
+                  },
+                  "metrics": [
+                    [ "AWS/EC2", "CPUUtilization", "AutoScalingGroupName", "${AsgName}" ]
+                  ],
+                  "region": "${AWS::Region}",
+                  "stat": "Average",
+                  "period": 60
+                }
+              }
+            ]
+          }
+        - {
+            AsgName: !Ref AutoScalingGroupName,
+            AlbFullName: !GetAtt WebAppALB.LoadBalancerFullName,
+            TgFullName: !GetAtt WebAppTargetGroup.TargetGroupFullName,
+            HighCpuAlarmArn: !GetAtt WebAppAsgHighCpuAlarm.Arn,
+            StatusCheckAlarmArn: !GetAtt AsgInstanceStatusCheckFailedAlarm.Arn,
+            CpuThresholdValue: !Ref CpuThreshold
+          }
+
+Outputs:
+  AlertsTopicArn:
+    Value: !Ref AlertsTopic
+
+  DecisionHandlerFunctionName:
+    Value: !Ref DecisionHandlerFunction
+
+  RemediationHandlerFunctionName:
+    Value: !Ref RemediationHandlerFunction
+
+  LoadBalancerDNS:
+    Value: !GetAtt WebAppALB.DNSName
+
+  AutoScalingGroupNameOutput:
+    Value: !Ref WebAppAutoScalingGroup
+
+  DashboardNameOutput:
+    Value: !Ref CloudMonitoringDashboard
