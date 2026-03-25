@@ -1,0 +1,11 @@
+{
+  "detail": {
+    "alarmName": "LowUtilizationAlarm-TestInstance",
+    "state": {
+      "value": "ALARM"
+    }
+  },
+  "resources": [
+    "i-037133a1849addb1f"
+  ]
+}

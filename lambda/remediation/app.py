@@ -1,87 +1,112 @@
+import json
 import os
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
+from uuid import uuid4
 
 import boto3
+from botocore.exceptions import ClientError
 
 
 ec2 = boto3.client("ec2")
 dynamodb = boto3.resource("dynamodb")
-cooldown_table = dynamodb.Table(os.environ["COOLDOWN_TABLE_NAME"])
+sns = boto3.client("sns")
 
-COOLDOWN_MINUTES = 10
+table = dynamodb.Table(os.environ["LOG_TABLE_NAME"])
+SNS_TOPIC_ARN = os.environ["SNS_TOPIC_ARN"]
 
 
-def lambda_handler(event, context):
-    print("Received event:", event)
+def send_notification(subject: str, message: str) -> None:
+    sns.publish(
+        TopicArn=SNS_TOPIC_ARN,
+        Subject=subject,
+        Message=message
+    )
 
-    instance_id = event.get("instance_id")
-    action = event.get("action")
-    incident_type = event.get("incident_type", "UNKNOWN")
-    alarm_name = event.get("alarm_name", "UNKNOWN")
 
-    if not instance_id or not action:
-        return {
-            "statusCode": 400,
-            "body": "Missing instance_id or action"
-        }
-
-    cooldown_key = f"{instance_id}#{action}"
-    now = datetime.now(timezone.utc)
-
-    existing = cooldown_table.get_item(Key={"cooldown_key": cooldown_key})
-    item = existing.get("Item")
-
-    if item:
-        last_action_time = datetime.fromisoformat(item["last_action_time"])
-        if now - last_action_time < timedelta(minutes=COOLDOWN_MINUTES):
-            result = (
-                f"Suppressed action {action} for {instance_id}. "
-                f"Cooldown active for {COOLDOWN_MINUTES} minutes."
-            )
-            print(
-                f"{result} | incident_type={incident_type} | alarm_name={alarm_name}"
-            )
-
-            return {
-                "statusCode": 200,
-                "body": result
-            }
-
-    if action == "REBOOT_INSTANCE":
-        ec2.reboot_instances(InstanceIds=[instance_id])
-        result = f"Reboot triggered for {instance_id}"
-
-    elif action == "STOP_INSTANCE":
-        ec2.stop_instances(InstanceIds=[instance_id])
-        result = f"Stop triggered for {instance_id}"
-
-    elif action == "SCALE_UP":
-        result = f"No scale action implemented for {instance_id}"
-
-    elif action == "CHECK_ALL_INSTANCES":
-        response = ec2.describe_instances()
-        result = f"Checked instances. Reservations count: {len(response.get('Reservations', []))}"
-
-    else:
-        result = f"No valid remediation mapped for action {action}"
-
-    cooldown_table.put_item(
+def log_incident(instance_id, alarm_name, alarm_state, incident_type, action, details, result_message, status):
+    table.put_item(
         Item={
-            "cooldown_key": cooldown_key,
-            "instance_id": instance_id,
-            "action": action,
-            "incident_type": incident_type,
-            "alarm_name": alarm_name,
-            "last_action_time": now.isoformat(),
+            "log_id": str(uuid4()),
+            "instance_id": instance_id or "UNKNOWN",
+            "alarm_name": alarm_name or "UNKNOWN",
+            "alarm_state": alarm_state or "UNKNOWN",
+            "incident_type": incident_type or "UNKNOWN",
+            "action": action or "NO_ACTION",
+            "status": status,
+            "result_message": result_message,
+            "details": details or {},
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
     )
 
-    print(
-        f"Remediation executed | result={result} | incident_type={incident_type} | "
-        f"alarm_name={alarm_name}"
+
+def lambda_handler(event, context):
+    print("Received event:", json.dumps(event))
+
+    instance_id = event.get("instance_id")
+    alarm_name = event.get("alarm_name")
+    alarm_state = event.get("alarm_state")
+    incident_type = event.get("incident_type", "UNKNOWN")
+    action = event.get("action", "NO_ACTION")
+    details = event.get("details", {})
+
+    result_message = ""
+    status = "SUCCESS"
+
+    try:
+        if not instance_id and action in ["REBOOT", "STOP"]:
+            raise ValueError("instance_id is required for REBOOT or STOP action")
+
+        if action == "REBOOT":
+            ec2.reboot_instances(InstanceIds=[instance_id])
+            result_message = f"Reboot triggered for instance {instance_id}"
+
+        elif action == "STOP":
+            ec2.stop_instances(InstanceIds=[instance_id])
+            result_message = f"Stop triggered for instance {instance_id}"
+
+        else:
+            result_message = f"No remediation action taken for incident type {incident_type}"
+
+    except Exception as e:
+        status = "FAILED"
+        result_message = f"Remediation failed: {str(e)}"
+        print("Remediation error:", result_message)
+
+    log_incident(
+        instance_id=instance_id,
+        alarm_name=alarm_name,
+        alarm_state=alarm_state,
+        incident_type=incident_type,
+        action=action,
+        details=details,
+        result_message=result_message,
+        status=status
+    )
+
+    send_notification(
+        subject=f"[Cloud Monitoring] {incident_type} - {action} - {status}",
+        message=(
+            f"Alarm Name: {alarm_name}\n"
+            f"Alarm State: {alarm_state}\n"
+            f"Instance ID: {instance_id}\n"
+            f"Incident Type: {incident_type}\n"
+            f"Action: {action}\n"
+            f"Status: {status}\n"
+            f"Result: {result_message}\n"
+            f"Details: {json.dumps(details)}"
+        )
     )
 
     return {
         "statusCode": 200,
-        "body": result
+        "body": json.dumps(
+            {
+                "message": result_message,
+                "status": status,
+                "instance_id": instance_id,
+                "incident_type": incident_type,
+                "action": action
+            }
+        )
     }
