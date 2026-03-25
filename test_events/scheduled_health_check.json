@@ -1,7 +1,0 @@
-{
-  "source": "aws.events",
-  "detail-type": "Scheduled Event",
-  "resources": [
-    "scheduled-health-check"
-  ]
-}

@@ -1,0 +1,10 @@
+{
+  "instance_id": "i-0df1db84cf6c64d82",
+  "alarm_name": "manual-reboot-test",
+  "alarm_state": "ALARM",
+  "incident_type": "STATUS_CHECK_FAILED",
+  "action": "REBOOT",
+  "details": {
+    "reason": "manual remediation lambda validation"
+  }
+}

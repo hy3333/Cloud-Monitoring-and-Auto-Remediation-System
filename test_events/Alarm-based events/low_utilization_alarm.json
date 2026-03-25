@@ -1,0 +1,18 @@
+{
+  "version": "0",
+  "id": "44444444-5555-6666-7777-888888888888",
+  "detail-type": "CloudWatch Alarm State Change",
+  "source": "aws.cloudwatch",
+  "account": "233636046266",
+  "time": "2026-03-24T14:00:00Z",
+  "region": "ap-south-2",
+  "resources": [
+    "arn:aws:cloudwatch:ap-south-2:233636046266:alarm:low-utilization-alarm"
+  ],
+  "detail": {
+    "alarmName": "low-utilization-alarm",
+    "state": {
+      "value": "ALARM"
+    }
+  }
+}

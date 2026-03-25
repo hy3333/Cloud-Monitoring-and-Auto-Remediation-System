@@ -1,0 +1,18 @@
+{
+  "version": "0",
+  "id": "55555555-6666-7777-8888-999999999999",
+  "detail-type": "CloudWatch Alarm State Change",
+  "source": "aws.cloudwatch",
+  "account": "233636046266",
+  "time": "2026-03-24T14:30:00Z",
+  "region": "ap-south-2",
+  "resources": [
+    "arn:aws:cloudwatch:ap-south-2:233636046266:alarm:scheduled-health-check-alarm"
+  ],
+  "detail": {
+    "alarmName": "scheduled-health-check-alarm",
+    "state": {
+      "value": "ALARM"
+    }
+  }
+}
