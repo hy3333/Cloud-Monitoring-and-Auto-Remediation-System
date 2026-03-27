@@ -1,54 +1,37 @@
-# Cloud Monitoring & Auto-Remediation System
+# Cloud Monitoring & Auto-Remediation System (AWS)
 
-## 📌 Overview
-
-This project implements a production-grade cloud monitoring and auto-remediation system on AWS using Infrastructure as Code (IaC).
-
-It monitors EC2 instances running in an Auto Scaling Group (ASG), detects incidents using CloudWatch alarms, and triggers automated decision-making and remediation workflows using Lambda.
+## Overview
+Production-grade cloud monitoring system built using AWS services and Infrastructure as Code (AWS SAM).  
+It detects incidents on EC2 instances running in an Auto Scaling Group (ASG) and triggers automated decision-making and remediation.
 
 ---
 
-## 🚀 Key Features
-
+## Key Highlights
+- Event-driven architecture using CloudWatch + EventBridge
+- Automated remediation using AWS Lambda
+- Intelligent decision engine (incident classification + cooldown logic)
+- Auto Scaling integration (separation of scaling vs remediation)
+- DynamoDB logging + notification tracking
+- SNS alerts with duplicate suppression
 - Fully deployed using AWS SAM (IaC)
-- Auto Scaling Group (ASG) for dynamic scaling
-- Application Load Balancer (ALB)
-- CloudWatch alarms for monitoring
-- EventBridge for event-driven flow
-- Lambda-based decision engine
-- Automated remediation (reboot/stop)
-- SNS notifications with cooldown logic
-- DynamoDB logging system
-- CloudWatch dashboard
 
 ---
 
-## 🧠 Architecture Flow
-
-CloudWatch Alarm → EventBridge → Decision Lambda →  
-→ (Reboot/Stop if needed) → Remediation Lambda → EC2  
-→ Logs → DynamoDB  
-→ Notification → SNS  
+## Architecture Diagram
+![Architecture Diagram](docs/architectureflow.png)
 
 ---
 
-## 📊 Incident Handling Logic
-
-| Incident Type         | Action                     | Reason |
-|----------------------|---------------------------|--------|
-| HIGH_CPU             | SCALE_MANAGED_BY_ASG      | Scaling handled by ASG |
-| STATUS_CHECK_FAILED  | REBOOT                    | Instance unhealthy |
-| LOW_UTILIZATION      | STOP                      | Cost optimization |
+## CloudWatch Dashboard
+![Dashboard](docs/CLOUD-MONITORING-DASHBOARD.png)
 
 ---
 
-## ⚙️ Tech Stack
-
+## Tech Stack
 - AWS SAM (CloudFormation)
 - AWS Lambda (Python)
-- Amazon EC2
-- Auto Scaling Group
-- Application Load Balancer
+- Amazon EC2 + Auto Scaling Group
+- Application Load Balancer (ALB)
 - CloudWatch (Alarms + Dashboard)
 - EventBridge
 - DynamoDB
@@ -56,69 +39,85 @@ CloudWatch Alarm → EventBridge → Decision Lambda →
 
 ---
 
-## 🏗️ Infrastructure Components
-
-### Compute
-- EC2 instances
-- Launch Template
-- Auto Scaling Group
-
-### Networking
-- Application Load Balancer
-- Security Groups
-
-### Monitoring
-- CloudWatch Alarms
-- CloudWatch Dashboard
-
-### Serverless
-- Decision Lambda
-- Remediation Lambda
-
-### Storage
-- DynamoDB (logs + cooldown tracking)
-
-### Notifications
-- SNS (email alerts)
+## System Flow
+CloudWatch Alarm → EventBridge → Decision Lambda →  
+→ Remediation Lambda (if needed) → EC2 Action  
+→ DynamoDB Logs → SNS Notification  
 
 ---
 
-## 🧠 Architecture Diagram
+## Incident Handling Logic
 
-![Architecture Diagram](docs/architectureflow.png)
-
-
-
-## 📁 Project Structure
-
-.
-├── template.yaml  
-├── samconfig.toml  
-├── README.md  
-├── docs/  
-│   └── architecture.png  
-├── lambda/  
-│   ├── decision/  
-│   │   ├── app.py  
-│   │   └── requirements.txt  
-│   └── remediation/  
-│       ├── app.py  
-│       └── requirements.txt  
-├── test_events/  
-│   ├── high_cpu_alarm.json  
-│   ├── status_check_failed_alarm.json  
-│   ├── low_utilization_alarm.json  
-│   ├── normal_state_event.json  
-│   ├── unknown_alarm.json  
-│   └── sample_event.json  
+| Incident Type        | Action                    | Description |
+|---------------------|---------------------------|-------------|
+| HIGH_CPU            | SCALE_MANAGED_BY_ASG     | Load handled by ASG scaling |
+| STATUS_CHECK_FAILED | REBOOT                   | Instance unhealthy |
+| LOW_UTILIZATION     | STOP                     | Cost optimization |
 
 ---
 
-## 🚀 Deployment
+## Core Design Decisions
+
+### Scaling vs Remediation
+- Scaling handled by ASG policies
+- Remediation handled by Lambda
+
+### Cooldown Mechanism
+- Prevents repeated alerts and actions
+- Ensures system stability under repeated alarms
+
+### Instance Resolution
+- Dynamically identifies correct EC2 instance from ASG
+- Avoids hardcoding
+
+---
+
+## Deployment
 
 ### Build
-
+```
 sam build
+```
+
+### First Deploy
+```
 sam deploy --guided
+```
 
+### Subsequent Deploy
+```
+sam deploy
+```
 
+---
+
+## Testing
+
+Use test events:
+- high_cpu_alarm.json
+- status_check_failed_alarm.json
+
+### Expected Behavior
+- High CPU → No reboot, ASG scales
+- Status failure → Instance reboot
+- Duplicate events → Suppressed via cooldown
+
+---
+
+## Real-World Value
+- Reduces manual intervention in cloud operations
+- Improves system reliability
+- Demonstrates production-level architecture design
+
+---
+
+## Future Improvements
+- Multi-region deployment
+- Slack/Webhook alerts
+- Predictive scaling
+- Advanced analytics
+
+---
+
+## Author
+    Himanshu Yadav
