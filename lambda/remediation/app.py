@@ -22,7 +22,17 @@ def send_notification(subject: str, message: str) -> None:
     )
 
 
-def log_incident(instance_id, alarm_name, alarm_state, incident_type, action, details, result_message, status):
+def log_incident(
+    instance_id,
+    alarm_name,
+    alarm_state,
+    incident_type,
+    action,
+    details,
+    result_message,
+    status,
+    should_notify
+):
     table.put_item(
         Item={
             "log_id": str(uuid4()),
@@ -33,6 +43,7 @@ def log_incident(instance_id, alarm_name, alarm_state, incident_type, action, de
             "action": action or "NO_ACTION",
             "status": status,
             "result_message": result_message,
+            "should_notify": should_notify,
             "details": details or {},
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "source": "remediation-handler"
@@ -49,6 +60,8 @@ def lambda_handler(event, context):
     incident_type = event.get("incident_type", "UNKNOWN")
     action = event.get("action", "NO_ACTION")
     details = event.get("details", {})
+    should_notify = event.get("should_notify", True)
+    cooldown_reason = event.get("cooldown_reason", "No cooldown reason provided")
 
     result_message = ""
     status = "SUCCESS"
@@ -84,22 +97,28 @@ def lambda_handler(event, context):
         action=action,
         details=details,
         result_message=result_message,
-        status=status
+        status=status,
+        should_notify=should_notify
     )
 
-    send_notification(
-        subject=f"[Cloud Monitoring] {incident_type} - {action} - {status}",
-        message=(
-            f"Alarm Name: {alarm_name}\n"
-            f"Alarm State: {alarm_state}\n"
-            f"Instance ID: {instance_id}\n"
-            f"Incident Type: {incident_type}\n"
-            f"Action: {action}\n"
-            f"Status: {status}\n"
-            f"Result: {result_message}\n"
-            f"Details: {json.dumps(details)}"
+    if should_notify:
+        send_notification(
+            subject=f"[Cloud Monitoring] {incident_type} - {action} - {status}",
+            message=(
+                f"Alarm Name: {alarm_name}\n"
+                f"Alarm State: {alarm_state}\n"
+                f"Instance ID: {instance_id}\n"
+                f"Incident Type: {incident_type}\n"
+                f"Action: {action}\n"
+                f"Status: {status}\n"
+                f"Result: {result_message}\n"
+                f"Cooldown Decision: {cooldown_reason}\n"
+                f"Details: {json.dumps(details)}"
+            )
         )
-    )
+        print("SNS notification sent")
+    else:
+        print(f"SNS notification skipped | reason={cooldown_reason}")
 
     return {
         "statusCode": 200,
@@ -109,7 +128,9 @@ def lambda_handler(event, context):
                 "status": status,
                 "instance_id": instance_id,
                 "incident_type": incident_type,
-                "action": action
+                "action": action,
+                "should_notify": should_notify,
+                "cooldown_reason": cooldown_reason
             }
         )
     }

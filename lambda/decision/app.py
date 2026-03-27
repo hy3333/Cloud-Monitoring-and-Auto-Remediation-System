@@ -77,7 +77,13 @@ def resolve_instance_id(event: dict, incident_type: str) -> tuple[str, str]:
     return "UNKNOWN", "Instance resolution not required for this incident type"
 
 
-def should_send_notification(instance_id: str, action: str, alarm_name: str) -> tuple[bool, str]:
+def evaluate_cooldown(instance_id: str, action: str, alarm_name: str) -> tuple[bool, bool, str]:
+    """
+    Returns:
+    - should_notify
+    - should_remediate
+    - reason
+    """
     notification_key = f"{instance_id}#{action}#{alarm_name}"
     existing = notification_table.get_item(Key={"notification_key": notification_key})
     item = existing.get("Item")
@@ -86,9 +92,10 @@ def should_send_notification(instance_id: str, action: str, alarm_name: str) -> 
     if item:
         last_sent_time = datetime.fromisoformat(item["last_sent_time"])
         if now - last_sent_time < timedelta(minutes=NOTIFICATION_COOLDOWN_MINUTES):
-            return False, (
-                f"Notification suppressed. Same incident notified within "
-                f"{NOTIFICATION_COOLDOWN_MINUTES} minutes."
+            return (
+                False,
+                False,
+                f"Cooldown active. Same incident already processed within {NOTIFICATION_COOLDOWN_MINUTES} minutes."
             )
 
     notification_table.put_item(
@@ -101,7 +108,11 @@ def should_send_notification(instance_id: str, action: str, alarm_name: str) -> 
         }
     )
 
-    return True, "Notification allowed. No recent duplicate notification found."
+    return (
+        True,
+        True,
+        "Cooldown clear. Notification and remediation allowed."
+    )
 
 
 def lambda_handler(event, context):
@@ -114,6 +125,25 @@ def lambda_handler(event, context):
     incident_type, action, decision_reason = classify_incident(alarm_name, state_value)
     instance_id, instance_resolution_reason = resolve_instance_id(event, incident_type)
 
+    should_notify = False
+    should_remediate = False
+    cooldown_reason = "Cooldown not evaluated"
+
+    if action in ["REBOOT", "STOP"]:
+        should_notify, should_remediate, cooldown_reason = evaluate_cooldown(
+            instance_id=instance_id,
+            action=action,
+            alarm_name=alarm_name
+        )
+    elif action == "SCALE_MANAGED_BY_ASG":
+        should_notify = False
+        should_remediate = False
+        cooldown_reason = "Scaling expected to be handled by ASG; no direct remediation or notification."
+    else:
+        should_notify = False
+        should_remediate = False
+        cooldown_reason = "No action required for this incident."
+
     log_item = {
         "log_id": str(uuid4()),
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -124,6 +154,9 @@ def lambda_handler(event, context):
         "alarm_state": state_value,
         "decision_reason": decision_reason,
         "instance_resolution_reason": instance_resolution_reason,
+        "should_notify": should_notify,
+        "should_remediate": should_remediate,
+        "cooldown_reason": cooldown_reason,
         "source": "decision-handler"
     }
 
@@ -132,13 +165,14 @@ def lambda_handler(event, context):
     print(
         f"Decision made | incident_type={incident_type} | action={action} | "
         f"instance_id={instance_id} | reason={decision_reason} | "
-        f"instance_resolution_reason={instance_resolution_reason}"
+        f"instance_resolution_reason={instance_resolution_reason} | "
+        f"should_notify={should_notify} | should_remediate={should_remediate} | "
+        f"cooldown_reason={cooldown_reason}"
     )
 
     remediation_invoked = False
 
-    # Only invoke remediation for real remediation actions
-    if action in ["REBOOT", "STOP"] and instance_id != "UNKNOWN":
+    if action in ["REBOOT", "STOP"] and should_remediate and instance_id != "UNKNOWN":
         remediation_payload = {
             "instance_id": instance_id,
             "incident_type": incident_type,
@@ -146,6 +180,8 @@ def lambda_handler(event, context):
             "alarm_name": alarm_name,
             "alarm_state": state_value,
             "details": event,
+            "should_notify": should_notify,
+            "cooldown_reason": cooldown_reason
         }
 
         lambda_client.invoke(
@@ -162,14 +198,12 @@ def lambda_handler(event, context):
     else:
         print("Remediation invocation skipped")
 
-    should_notify, notification_reason = should_send_notification(instance_id, action, alarm_name)
-
-    print(
-        f"Notification decision | should_notify={should_notify} | "
-        f"reason={notification_reason} | remediation_invoked={remediation_invoked}"
-    )
-
     return {
         "statusCode": 200,
-        "body": json.dumps(log_item)
+        "body": json.dumps(
+            {
+                **log_item,
+                "remediation_invoked": remediation_invoked
+            }
+        )
     }
