@@ -17,6 +17,9 @@ It detects incidents on EC2 instances running in an Auto Scaling Group (ASG) and
 
 ---
 
+## ALB URl
+http://monitoring-alb-66298104.ap-south-2.elb.amazonaws.com
+
 ## Architecture Diagram
 ![Architecture Diagram](docs/architectureflow.png)
 
@@ -26,6 +29,9 @@ It detects incidents on EC2 instances running in an Auto Scaling Group (ASG) and
 ![Dashboard](docs/CLOUD-MONITORING-DASHBOARD.png)
 
 ---
+
+## SNS Email Notification
+![SNS Email Notification](docs/sns-email.png)
 
 ## Tech Stack
 - AWS SAM (CloudFormation)
