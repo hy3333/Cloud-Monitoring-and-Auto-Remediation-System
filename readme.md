@@ -6,6 +6,11 @@ It detects incidents on EC2 instances running in an Auto Scaling Group (ASG) and
 
 ---
 
+## ALB URl
+http://monitoring-alb-66298104.ap-south-2.elb.amazonaws.com
+
+---
+
 ## Key Highlights
 - Event-driven architecture using CloudWatch + EventBridge
 - Automated remediation using AWS Lambda
@@ -16,9 +21,6 @@ It detects incidents on EC2 instances running in an Auto Scaling Group (ASG) and
 - Fully deployed using AWS SAM (IaC)
 
 ---
-
-## ALB URl
-http://monitoring-alb-66298104.ap-south-2.elb.amazonaws.com
 
 ## Architecture Diagram
 ![Architecture Diagram](docs/architectureflow.png)
