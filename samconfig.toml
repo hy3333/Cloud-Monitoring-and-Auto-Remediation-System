@@ -4,10 +4,10 @@ version = 0.1
 stack_name = "cloud-monitoring-stack"
 resolve_s3 = true
 s3_prefix = "cloud-monitoring-stack"
-capabilities = "CAPABILITY_IAM"
+capabilities = "CAPABILITY_NAMED_IAM"
 image_repositories = []
 confirm_changeset = true
-parameter_overrides = "ProjectName=\"cloud-monitoring\" NotificationEmail=\"hy12042003@gmail.com\" VpcId=\"vpc-0a10a5fd83f8ed401\" PublicSubnet1=\"subnet-05e03d7ef9f5dc74a\" PublicSubnet2=\"subnet-055db93aa53c699c1\" KeyPairName=\"cloud-monitoring-key\" SSHLocation=\"0.0.0.0/0\" InstanceType=\"t3.micro\" AmiId=\"/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64\" AlbName=\"monitoring-alb\" TargetGroupName=\"monitoring-tg\" AutoScalingGroupName=\"monitoring-asg\" LaunchTemplateName=\"monitoring-LT\" DashboardName=\"cloud-monitoring-dashboard\" AlertsTopicName=\"cloud-monitoring\" HighCpuAlarmName=\"high-cpu-alarm\" StatusCheckAlarmName=\"status-check-alarm\" IncidentLogsTableName=\"cloud-monitoring-log\" NotificationCooldownTableName=\"notification-cooldown\" CpuThreshold=\"70\""
+parameter_overrides = "ProjectName=\"cloud-monitoring\" NotificationEmail=\"hy12042003@gmail.com\" VpcId=\"vpc-0a10a5fd83f8ed401\" PublicSubnet1=\"subnet-05e03d7ef9f5dc74a\" PublicSubnet2=\"subnet-055db93aa53c699c1\" KeyPairName=\"cloud-monitoring-key\" SSHLocation=\"0.0.0.0/0\" InstanceType=\"t3.micro\" AmiId=\"/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64\" AlbName=\"monitoring-alb\" TargetGroupName=\"monitoring-tg\" AutoScalingGroupName=\"monitoring-asg\" LaunchTemplateName=\"monitoring-LT\" DashboardName=\"cloud-monitoring-dashboard\" AlertsTopicName=\"cloud-monitoring\" HighCpuAlarmName=\"high-cpu-alarm\" StatusCheckAlarmName=\"status-check-alarm\" IncidentLogsTableName=\"cloud-monitoring-log\" NotificationCooldownTableName=\"notification-cooldown\" CpuThreshold=\"70\" FrontendBucketName=\"cloud-monitoring-frontend-assets-hy12042003\""
 
 [default.global.parameters]
 region = "ap-south-2"

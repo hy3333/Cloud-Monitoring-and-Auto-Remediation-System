@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Cloud Monitoring & Auto-Remediation System</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="hero" id="top">
+      <div class="content">
+        <h1>Cloud Monitoring & Auto-Remediation System</h1>
+        <p class="hero-value">
+          Real-time AWS monitoring system with automated incident detection,
+          decision-making, and remediation.
+        </p>
+        <p>
+          Detects EC2 incidents with CloudWatch and automates resolution via
+          EventBridge, Lambda, ASG, DynamoDB, and SNS.
+        </p>
+        <div class="hero-buttons">
+          <a href="https://github.com/hy3333/Cloud-Monitoring-and-Auto-Remediation-System" target="_blank" rel="noreferrer" class="btn">View GitHub Repo</a>
+          <a href="#architecture" class="btn btn-secondary">View Architecture</a>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section id="overview" class="section">
+        <h2>Overview</h2>
+        <p>
+          This system provides cloud-native incident management for EC2 in an
+          Auto Scaling Group:
+          alarms trigger EventBridge, a decision engine runs in Lambda, and
+          remediation actions are executed automatically while tracking state
+          in DynamoDB and notifying via SNS.
+        </p>
+      </section>
+
+      <section id="features" class="section">
+        <h2>Features</h2>
+        <div class="grid cards">
+          <article class="card">
+            <h3>Event-driven monitoring</h3>
+            <p>CloudWatch alarms feed incidents into EventBridge for realtime responses.</p>
+          </article>
+          <article class="card">
+            <h3>Automated remediation</h3>
+            <p>Lambda functions execute corrective actions without manual intervention.</p>
+          </article>
+          <article class="card">
+            <h3>Cooldown logic</h3>
+            <p>Duplicate alarms are suppressed to avoid repeated actions and alert fatigue.</p>
+          </article>
+          <article class="card">
+            <h3>ASG integration</h3>
+            <p>HIGH_CPU incidents are scaled by Auto Scaling Group policies.</p>
+          </article>
+          <article class="card">
+            <h3>DynamoDB logging</h3>
+            <p>Incident decisions and actions are persisted for auditing and analysis.</p>
+          </article>
+          <article class="card">
+            <h3>CloudWatch dashboard</h3>
+            <p>Centralized metrics, alarms, and health overview for state visibility.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="architecture" class="section">
+        <h2>Architecture</h2>
+        <div class="architecture-block">
+          <img src="images/architectureflow.png" alt="Architecture diagram" class="lightbox-image" />
+          <ul>
+            <li>CloudWatch triggers alarms and alerts EventBridge.</li>
+            <li>Decision Lambda classifies incidents and checks cooldown.</li>
+            <li>Remediation Lambda performs EC2 action and records the event.</li>
+          </ul>
+        </div>
+      </section>
+
+      <section id="incident" class="section">
+        <h2>Incident Handling</h2>
+        <div class="grid incident-grid">
+          <div class="card small-card">
+            <h4>HIGH_CPU</h4>
+            <p>Action: SCALE_MANAGED_BY_ASG</p>
+          </div>
+          <div class="card small-card">
+            <h4>STATUS_CHECK_FAILED</h4>
+            <p>Action: REBOOT</p>
+          </div>
+          <div class="card small-card">
+            <h4>LOW_UTILIZATION</h4>
+            <p>Action: STOP</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="services" class="section">
+        <h2>AWS Services Used</h2>
+        <div class="grid cards services-grid">
+          <article class="card">
+            <h3>CloudWatch</h3>
+            <p>Monitor metrics and define alarms.</p>
+          </article>
+          <article class="card">
+            <h3>EventBridge</h3>
+            <p>Route alarm events into the decision workflow.</p>
+          </article>
+          <article class="card">
+            <h3>Lambda</h3>
+            <p>Decision engine and remediation actions.</p>
+          </article>
+          <article class="card">
+            <h3>DynamoDB</h3>
+            <p>Store incident decisions and cooldown state.</p>
+          </article>
+          <article class="card">
+            <h3>SNS</h3>
+            <p>Notifications for operators and status updates.</p>
+          </article>
+          <article class="card">
+            <h3>EC2 + ASG + ALB</h3>
+            <p>Compute layer with scaling and traffic routing.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="demo" class="section">
+        <h2>Demo / Proof</h2>
+        <div class="grid demo-grid">
+          <figure class="demo-card">
+            <img src="images/CLOUD-MONITORING-DASHBOARD.png" alt="Dashboard screenshot" class="lightbox-image" />
+            <figcaption>
+              Dashboard screenshot
+              <span>Shows real-time CPU utilization, alarm states, target health, and ASG capacity.</span>
+            </figcaption>
+          </figure>
+          <figure class="demo-card">
+            <img src="images/sns-email.png" alt="SNS email screenshot" class="lightbox-image" />
+            <figcaption>
+              SNS email screenshot
+              <span>Automated notification sent when the system detects and processes an incident.</span>
+            </figcaption>
+          </figure>
+          <figure class="demo-card">
+            <img src="images/logs.png" alt="Logs screenshot" class="lightbox-image" />
+            <figcaption>
+              Logs screenshot
+              <span>Decision engine logs showing incident classification, cooldown check, and remediation flow.</span>
+            </figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section id="live-demo-flow" class="section">
+        <h2>Live Demo Flow</h2>
+        <div class="grid flow-grid">
+          <div class="flow-card">1. CloudWatch detects incident</div>
+          <div class="flow-card">2. EventBridge routes alarm event</div>
+          <div class="flow-card">3. Decision Lambda classifies issue</div>
+          <div class="flow-card">4. Remediation Lambda takes action</div>
+          <div class="flow-card">5. SNS sends notification</div>
+          <div class="flow-card">6. Logs stored for auditing</div>
+        </div>
+      </section>
+    </main>
+
+    <div id="image-modal" class="image-modal" aria-hidden="true" role="dialog" aria-label="Image lightbox">
+      <div class="image-modal-backdrop"></div>
+      <div class="image-modal-content">
+        <button type="button" class="close-modal" aria-label="Close image">×</button>
+        <img id="modal-image" src="" alt="Expanded screenshot" />
+        <p id="modal-caption"></p>
+      </div>
+    </div>
+
+    <script src="script.js"></script>
+
+    <footer class="footer">
+      <div>
+        <a href="https://github.com/hy3333/Cloud-Monitoring-and-Auto-Remediation-System" target="_blank" rel="noreferrer">GitHub Repo</a>
+        <span>·</span>
+        <span>Author: Himanshu Yadav</span>
+        <span>·</span>
+        <a href="https://www.linkedin.com/in/himanshu-yadav-12apr/" target="_blank" rel="noreferrer">LinkedIn</a>
+      </div>
+      <p>© 2026 Cloud Monitoring & Auto-Remediation System</p>
+    </footer>
+  </body>
+</html>

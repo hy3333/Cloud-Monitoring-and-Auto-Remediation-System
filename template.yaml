@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: Full parameterized cloud monitoring and auto-remediation system
+Description: Full parameterized cloud monitoring and auto-remediation system with private S3-hosted frontend assets pulled by EC2 at boot
 
 Parameters:
   ProjectName:
@@ -89,6 +89,10 @@ Parameters:
     Default: 70
     Description: CPU threshold for scale monitoring
 
+  FrontendBucketName:
+    Type: String
+    Description: Unique S3 bucket name for frontend assets
+
 Globals:
   Function:
     Runtime: python3.13
@@ -98,9 +102,6 @@ Globals:
       - x86_64
 
 Resources:
-  #######################################
-  # SNS
-  #######################################
   AlertsTopic:
     Type: AWS::SNS::Topic
     Properties:
@@ -113,9 +114,6 @@ Resources:
       Protocol: email
       Endpoint: !Ref NotificationEmail
 
-  #######################################
-  # DynamoDB
-  #######################################
   IncidentRemediationLogsTable:
     Type: AWS::DynamoDB::Table
     Properties:
@@ -140,9 +138,16 @@ Resources:
         - AttributeName: notification_key
           KeyType: HASH
 
-  #######################################
-  # Security Groups
-  #######################################
+  FrontendAssetsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref FrontendBucketName
+      Tags:
+        - Key: Name
+          Value: !Ref FrontendBucketName
+        - Key: Project
+          Value: !Ref ProjectName
+
   AlbSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -186,9 +191,40 @@ Resources:
         - Key: Name
           Value: !Sub '${ProjectName}-web-ec2-sg'
 
-  #######################################
-  # Lambda Functions
-  #######################################
+  WebAppEc2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-ec2-frontend-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: !Sub '${ProjectName}-frontend-s3-read-policy'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: ListFrontendBucket
+                Effect: Allow
+                Action:
+                  - s3:ListBucket
+                Resource: !Sub 'arn:aws:s3:::${FrontendBucketName}'
+              - Sid: ReadFrontendObjects
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource: !Sub 'arn:aws:s3:::${FrontendBucketName}/*'
+
+  WebAppInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub '${ProjectName}-ec2-frontend-instance-profile'
+      Roles:
+        - !Ref WebAppEc2Role
+
   DecisionHandlerFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -247,9 +283,6 @@ Resources:
                 - ec2:DescribeInstances
               Resource: "*"
 
-  #######################################
-  # EventBridge Rules
-  #######################################
   StatusCheckAlarmToDecisionRule:
     Type: AWS::Events::Rule
     Properties:
@@ -306,9 +339,6 @@ Resources:
       Principal: events.amazonaws.com
       SourceArn: !GetAtt HighCpuAlarmToDecisionRule.Arn
 
-  #######################################
-  # ALB + Target Group + Listener
-  #######################################
   WebAppTargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
@@ -350,9 +380,6 @@ Resources:
         - Type: forward
           TargetGroupArn: !Ref WebAppTargetGroup
 
-  #######################################
-  # Launch Template
-  #######################################
   WebAppLaunchTemplate:
     Type: AWS::EC2::LaunchTemplate
     Properties:
@@ -361,6 +388,8 @@ Resources:
         ImageId: !Ref AmiId
         InstanceType: !Ref InstanceType
         KeyName: !Ref KeyPairName
+        IamInstanceProfile:
+          Arn: !GetAtt WebAppInstanceProfile.Arn
         SecurityGroupIds:
           - !Ref WebEc2SecurityGroup
         TagSpecifications:
@@ -373,15 +402,20 @@ Resources:
         UserData:
           Fn::Base64: !Sub |
             #!/bin/bash
-            dnf update -y || yum update -y
-            dnf install -y httpd || yum install -y httpd
-            systemctl enable httpd
-            systemctl start httpd
-            echo "<h1>Cloud Monitoring Demo App</h1><p>Instance: $(hostname -f)</p>" > /var/www/html/index.html
+            set -eux
 
-  #######################################
-  # Auto Scaling Group
-  #######################################
+            dnf update -y || yum update -y
+            dnf install -y httpd awscli || yum install -y httpd awscli
+
+            mkdir -p /var/www/html
+            aws s3 sync s3://${FrontendBucketName}/ /var/www/html/ --delete
+
+            chown -R apache:apache /var/www/html || true
+            chmod -R 755 /var/www/html || true
+
+            systemctl enable httpd
+            systemctl restart httpd || systemctl start httpd
+
   WebAppAutoScalingGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
     Properties:
@@ -425,9 +459,6 @@ Resources:
           Value: !Ref ProjectName
           PropagateAtLaunch: true
 
-  #######################################
-  # Scaling Policy
-  #######################################
   CpuTargetTrackingScalingPolicy:
     Type: AWS::AutoScaling::ScalingPolicy
     Properties:
@@ -438,9 +469,6 @@ Resources:
           PredefinedMetricType: ASGAverageCPUUtilization
         TargetValue: !Ref CpuThreshold
 
-  #######################################
-  # CloudWatch Alarms
-  #######################################
   WebAppAsgHighCpuAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
@@ -479,9 +507,6 @@ Resources:
         - Name: AutoScalingGroupName
           Value: !Ref AutoScalingGroupName
 
-  #######################################
-  # CloudWatch Dashboard
-  #######################################
   CloudMonitoringDashboard:
     Type: AWS::CloudWatch::Dashboard
     Properties:
@@ -648,3 +673,6 @@ Outputs:
 
   DashboardNameOutput:
     Value: !Ref CloudMonitoringDashboard
+
+  FrontendBucketNameOutput:
+    Value: !Ref FrontendAssetsBucket
